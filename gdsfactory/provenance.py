@@ -59,6 +59,7 @@ _GDSFACTORY_DIRS: tuple[str, ...] = (
     "gdsfactory",
     "kfactory",
     "klayout",
+    "cachetools",
 )
 
 
