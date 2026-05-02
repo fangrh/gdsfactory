@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import warnings
 from abc import ABC, abstractmethod
@@ -328,7 +329,12 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
             x, y = position
 
         trans = kdb.DTrans(0, False, x, y)
-        self.shapes(layer).insert(kf.kdb.DText(text, trans))
+        _shape = self.shapes(layer).insert(kf.kdb.DText(text, trans))
+
+        _tracker = self._get_provenance_tracker()
+        if _tracker is not None and _shape is not None:
+            _pid = _tracker.capture(self.name, "label")
+            _shape.set_property(1002, _pid)
 
     def get_ports_list(self, **kwargs: Any) -> list[Port]:
         """Returns list of ports.
@@ -407,6 +413,17 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
             if k not in self.info:
                 self.info[k] = v
 
+    def _get_provenance_tracker(self):
+        """Lazily initialize a ProvenanceTracker if GDS_PROVENANCE=1 is set."""
+        if hasattr(self, "_provenance_tracker"):
+            return self._provenance_tracker
+        if os.environ.get("GDS_PROVENANCE") == "1":
+            from gdsfactory.provenance import ProvenanceTracker
+
+            self._provenance_tracker = ProvenanceTracker()
+            return self._provenance_tracker
+        return None
+
     def write_gds(
         self,
         gdspath: PathType | None = None,
@@ -460,6 +477,11 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
             save_options.write_context_info = False
 
         self.write(filename=gdspath, save_options=save_options)
+
+        _tracker = getattr(self, "_provenance_tracker", None)
+        if _tracker is not None and _tracker._entries:
+            _tracker.write_sidecar(gdspath)
+
         return pathlib.Path(gdspath)
 
     def pprint_ports(self, **kwargs: Any) -> None:
@@ -744,6 +766,18 @@ class Component(ComponentBase, kf.DKCell):
             inst = self.create_inst(component)
         if name is not None:
             inst.name = name
+
+        _tracker = self._get_provenance_tracker()
+        if _tracker is not None:
+            if not hasattr(component, "_provenance_tracker"):
+                component._provenance_tracker = _tracker
+            _inst_name = name or f"{component.name}_{len(self.insts)}"
+            _inst_path = f"{self.name}/{_inst_name}"
+            _transform = str(inst.instance.dcplx_trans)
+            _tracker.track_instance(
+                self.name, component.name, _inst_path, _transform
+            )
+
         return ComponentReference(kcl=self.kcl, instance=inst.instance)
 
     def get_paths(self, layer: LayerSpec, recursive: bool = True) -> list[kf.kdb.DPath]:
@@ -1193,7 +1227,14 @@ class Component(ComponentBase, kf.DKCell):
         if isinstance(polygon, kdb.DPolygon | kdb.DSimplePolygon):
             polygon = polygon.to_itype(self.kcl.dbu)  # type: ignore[assignment]
 
-        return self.kdb_cell.shapes(_layer).insert(polygon)
+        shape = self.kdb_cell.shapes(_layer).insert(polygon)
+
+        _tracker = self._get_provenance_tracker()
+        if _tracker is not None and shape is not None:
+            _pid = _tracker.capture(self.name, "polygon")
+            shape.set_property(1002, _pid)
+
+        return shape
 
     @overload
     def plot(
