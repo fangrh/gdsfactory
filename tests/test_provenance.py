@@ -113,7 +113,8 @@ def test_add_ref_tracking():
         sidecar = gdspath.with_suffix(".provenance.json")
         data = json.loads(sidecar.read_text())
 
-        instances = [e for e in data["entries"] if e["element_type"] == "instance"]
+        instances = [e for e in data["entries"]
+                     if e["element_type"] == "instance" and e["component"] == "ref_tracking_test"]
         assert len(instances) == 2, (
             f"Should have 2 instance entries for 2 add_ref calls, got {len(instances)}"
         )

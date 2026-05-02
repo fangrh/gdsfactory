@@ -13,10 +13,46 @@ import json
 import os
 import pathlib
 import linecache
+import threading
 from typing import Any
 
 # GDS properties use integer keys. 1001 is reserved for SOURCE_PROP_KEY.
 PROV_ID_PROP_KEY = 1002
+
+# Module-level global counter ensures PROV_ID uniqueness across all trackers.
+_global_id_lock = threading.Lock()
+_global_next_id = 0
+
+
+def _next_global_id() -> int:
+    global _global_next_id
+    with _global_id_lock:
+        pid = _global_next_id
+        _global_next_id += 1
+        return pid
+
+
+def _reset_global_id() -> None:
+    """Reset the global ID counter and tracker dict. Called between builds."""
+    global _global_next_id, _trackers_by_cell_index
+    with _global_id_lock:
+        _global_next_id = 0
+    _trackers_by_cell_index = {}
+
+
+# Module-level dict to store trackers by klayout cell index.
+# kfactory's cell caching creates new Python wrappers for cached components,
+# so _provenance_tracker on the Component object gets lost. Keying by
+# cell_index (stable across wrapper replacements) survives this.
+_trackers_by_cell_index: dict[int, ProvenanceTracker] = {}
+
+
+def get_tracker(cell_index: int) -> ProvenanceTracker | None:
+    return _trackers_by_cell_index.get(cell_index)
+
+
+def set_tracker(cell_index: int, tracker: ProvenanceTracker) -> None:
+    _trackers_by_cell_index[cell_index] = tracker
 
 
 _GDSFACTORY_DIRS: tuple[str, ...] = (
@@ -91,41 +127,38 @@ def _find_user_frame() -> dict[str, Any] | None:
 class ProvenanceTracker:
     """Captures per-shape provenance for a Component build.
 
-    One tracker per write_gds call, stored on the top-level Component.
-    Child components get the same tracker via propagation in add_ref.
+    Uses module-level global counter for unique PROV_IDs across all
+    components in a build. write_sidecar() merges entries from child
+    component trackers.
     """
 
     def __init__(self) -> None:
         self._entries: list[dict[str, Any]] = []
-        self._next_id: int = 0
+        self._child_trackers: list[ProvenanceTracker] = []
 
     def capture(self, component_name: str, element_type: str = "polygon") -> int:
-        """Capture caller info and return a provenance ID.
-
-        Walks the call stack to find user code, records file/line/function.
-        """
+        """Capture caller info and return a globally-unique provenance ID."""
+        pid = _next_global_id()
         user_info = _find_user_frame()
-        if user_info is None:
-            pid = self._next_id
-            self._next_id += 1
-            self._entries.append({
-                "id": pid,
-                "component": component_name,
-                "element_type": element_type,
+
+        entry: dict[str, Any] = {
+            "id": pid,
+            "component": component_name,
+            "element_type": element_type,
+        }
+
+        if user_info is not None:
+            entry.update(user_info)
+        else:
+            entry.update({
                 "file": "<unknown>",
                 "line": 0,
                 "function": "<unknown>",
                 "source_text": "",
                 "call_stack": [],
             })
-            return pid
 
-        pid = self._next_id
-        self._next_id += 1
-        user_info["id"] = pid
-        user_info["component"] = component_name
-        user_info["element_type"] = element_type
-        self._entries.append(user_info)
+        self._entries.append(entry)
         return pid
 
     def track_instance(
@@ -135,14 +168,9 @@ class ProvenanceTracker:
         instance_path: str,
         transform: str,
     ) -> int:
-        """Track an add_ref placement with instance path (D13).
-
-        Each reference placement gets its own provenance entry, even
-        if the same cell is referenced multiple times.
-        """
+        """Track an add_ref placement with instance path (D13)."""
+        pid = _next_global_id()
         user_info = _find_user_frame()
-        pid = self._next_id
-        self._next_id += 1
 
         entry: dict[str, Any] = {
             "id": pid,
@@ -154,24 +182,49 @@ class ProvenanceTracker:
         }
 
         if user_info is not None:
-            entry["file"] = user_info["file"]
-            entry["line"] = user_info["line"]
-            entry["function"] = user_info["function"]
-            entry["source_text"] = user_info["source_text"]
-            entry["call_stack"] = user_info["call_stack"]
+            entry.update({
+                "file": user_info["file"],
+                "line": user_info["line"],
+                "function": user_info["function"],
+                "source_text": user_info["source_text"],
+                "call_stack": user_info["call_stack"],
+            })
         else:
-            entry["file"] = "<unknown>"
-            entry["line"] = 0
-            entry["function"] = "<unknown>"
-            entry["source_text"] = ""
-            entry["call_stack"] = []
+            entry.update({
+                "file": "<unknown>",
+                "line": 0,
+                "function": "<unknown>",
+                "source_text": "",
+                "call_stack": [],
+            })
 
         self._entries.append(entry)
         return pid
 
+    def add_child_tracker(self, child: ProvenanceTracker) -> None:
+        """Register a child component's tracker for merging at write time."""
+        if child is not self and child not in self._child_trackers:
+            self._child_trackers.append(child)
+
+    def _all_entries(self) -> list[dict[str, Any]]:
+        """Collect entries from this tracker and all children, deduped by ID."""
+        seen: set[int] = set()
+        entries: list[dict[str, Any]] = []
+        for entry in self._entries:
+            if entry["id"] not in seen:
+                seen.add(entry["id"])
+                entries.append(entry)
+        for child in self._child_trackers:
+            for entry in child._all_entries():
+                if entry["id"] not in seen:
+                    seen.add(entry["id"])
+                    entries.append(entry)
+        entries.sort(key=lambda e: e["id"])
+        return entries
+
     def get_sidecar(self) -> dict[str, Any]:
         """Return the provenance data as a dict for JSON serialization."""
-        return {"version": 1, "entries": self._entries}
+        return {"version": 1, "entries": self._all_entries()}
 
     def write_sidecar(self, gds_path: str | pathlib.Path) -> pathlib.Path:
         """Write .provenance.json sidecar next to the GDS file."""

@@ -414,14 +414,28 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
                 self.info[k] = v
 
     def _get_provenance_tracker(self):
-        """Lazily initialize a ProvenanceTracker if GDS_PROVENANCE=1 is set."""
+        """Lazily initialize a ProvenanceTracker if GDS_PROVENANCE=1 is set.
+
+        Uses a module-level dict keyed by klayout cell_index because
+        kfactory's cell caching creates new Python wrappers for cached
+        components, losing instance attributes like _provenance_tracker.
+        cell_index is stable across wrapper replacements.
+        """
         if hasattr(self, "_provenance_tracker"):
             return self._provenance_tracker
+        from gdsfactory.provenance import get_tracker
+        _cidx = self.kdb_cell.cell_index()
+        existing = get_tracker(_cidx)
+        if existing is not None:
+            self._provenance_tracker = existing
+            return existing
         if os.environ.get("GDS_PROVENANCE") == "1":
-            from gdsfactory.provenance import ProvenanceTracker
+            from gdsfactory.provenance import ProvenanceTracker, set_tracker
 
-            self._provenance_tracker = ProvenanceTracker()
-            return self._provenance_tracker
+            tracker = ProvenanceTracker()
+            self._provenance_tracker = tracker
+            set_tracker(_cidx, tracker)
+            return tracker
         return None
 
     def write_gds(
@@ -479,8 +493,12 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
         self.write(filename=gdspath, save_options=save_options)
 
         _tracker = getattr(self, "_provenance_tracker", None)
-        if _tracker is not None and _tracker._entries:
-            _tracker.write_sidecar(gdspath)
+        if _tracker is not None:
+            all_entries = _tracker._all_entries()
+            if all_entries:
+                _tracker.write_sidecar(gdspath)
+            from gdsfactory.provenance import _reset_global_id
+            _reset_global_id()
 
         return pathlib.Path(gdspath)
 
@@ -769,7 +787,15 @@ class Component(ComponentBase, kf.DKCell):
 
         _tracker = self._get_provenance_tracker()
         if _tracker is not None:
-            if not hasattr(component, "_provenance_tracker"):
+            from gdsfactory.provenance import get_tracker as _get_tracker
+            child_tracker = getattr(component, "_provenance_tracker", None)
+            if child_tracker is None:
+                child_tracker = _get_tracker(component.kdb_cell.cell_index())
+                if child_tracker is not None:
+                    component._provenance_tracker = child_tracker
+            if child_tracker is not None and child_tracker is not _tracker:
+                _tracker.add_child_tracker(child_tracker)
+            elif child_tracker is None:
                 component._provenance_tracker = _tracker
             _inst_name = name or f"{component.name}_{len(self.insts)}"
             _inst_path = f"{self.name}/{_inst_name}"
