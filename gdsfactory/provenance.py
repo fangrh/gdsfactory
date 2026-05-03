@@ -19,6 +19,7 @@ from typing import Any
 # GDS properties use integer keys. 1001 is reserved for SOURCE_PROP_KEY.
 PROV_ID_PROP_KEY = 1002
 PLACEMENT_PROP_KEY = 1004
+SOURCE_TAG_INSTANCE_KEY = 1005  # Property key on Instance objects for source tags
 
 # Module-level global counter ensures PROV_ID uniqueness across all trackers.
 _global_id_lock = threading.Lock()
@@ -124,32 +125,6 @@ def _find_user_frame() -> dict[str, Any] | None:
         del frames_to_clean
 
     return user_info
-
-
-def tag_shapes_with_source_tag(kdb_cell, source_tag: str) -> None:
-    """Tag all shapes in a cell (and descendants) with indexed source tags.
-
-    Each shape gets a globally-unique shape_idx via the module-level counter,
-    so even shared child cells (e.g. bend_euler used by multiple placements)
-    get distinct indices after flatten.
-    """
-    _tag_cell_with_shape_index(kdb_cell, source_tag)
-
-
-def _tag_cell_with_shape_index(cell, base_tag: str) -> None:
-    if cell.is_locked():
-        cell.locked = False
-    for li in range(cell.layout().layers()):
-        if not cell.layout().is_valid_layer(li):
-            continue
-        for shape in cell.shapes(li).each():
-            tag_data = json.loads(base_tag)
-            tag_data["shape_idx"] = _next_global_id()
-            shape.set_property(PROV_ID_PROP_KEY, json.dumps(tag_data))
-    for ci in cell.each_child_cell():
-        child = cell.layout().cell(ci)
-        if child is not None:
-            _tag_cell_with_shape_index(child, base_tag)
 
 
 def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:

@@ -813,8 +813,9 @@ class Component(ComponentBase, kf.DKCell):
                 pass
 
             if _source_tag is not None:
-                from gdsfactory.provenance import tag_shapes_with_source_tag
-                tag_shapes_with_source_tag(component.kdb_cell, _source_tag)
+                # Store source tag on the klayout Instance for backend
+                # to propagate during custom flatten (avoids shared-cell overwrite)
+                inst.instance.set_property(1005, _source_tag)
             else:
                 from gdsfactory.provenance import tag_shapes_with_placement, _find_user_frame
                 _placement_info = _find_user_frame()
