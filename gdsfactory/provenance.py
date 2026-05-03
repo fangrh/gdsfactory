@@ -18,6 +18,7 @@ from typing import Any
 
 # GDS properties use integer keys. 1001 is reserved for SOURCE_PROP_KEY.
 PROV_ID_PROP_KEY = 1002
+PLACEMENT_PROP_KEY = 1004
 
 # Module-level global counter ensures PROV_ID uniqueness across all trackers.
 _global_id_lock = threading.Lock()
@@ -123,6 +124,48 @@ def _find_user_frame() -> dict[str, Any] | None:
         del frames_to_clean
 
     return user_info
+
+
+def tag_shapes_with_source_tag(kdb_cell, source_tag: str) -> None:
+    """Tag all shapes in a cell (and descendants) with AST-transform source tag.
+
+    Called from add_ref() when the thread-local source tag is available
+    (i.e. running under the AST transform build pipeline).
+    """
+    _tag_cell_recursive(kdb_cell, source_tag, PROV_ID_PROP_KEY)
+
+
+def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:
+    """Tag all shapes in a cell (and descendants) with placement source info.
+
+    When ``c << component`` is called, this propagates the placement call's
+    source location (file, line, source_text) down to every shape inside the
+    child component so that downstream consumers can attribute each shape
+    to the user-level placement call rather than the internal polygon creation.
+    """
+    if user_info is None:
+        return
+    tag = json.dumps({
+        "file": user_info["file"],
+        "line": user_info["line"],
+        "source_text": user_info["source_text"],
+        "instance_prov_id": instance_prov_id,
+    })
+    _tag_cell_recursive(kdb_cell, tag, PLACEMENT_PROP_KEY)
+
+
+def _tag_cell_recursive(cell, tag: str, prop_key: int = PLACEMENT_PROP_KEY) -> None:
+    if cell.is_locked():
+        cell.locked = False
+    for li in range(cell.layout().layers()):
+        if not cell.layout().is_valid_layer(li):
+            continue
+        for shape in cell.shapes(li).each():
+            shape.set_property(prop_key, tag)
+    for ci in cell.each_child_cell():
+        child = cell.layout().cell(ci)
+        if child is not None:
+            _tag_cell_recursive(child, tag, prop_key)
 
 
 class ProvenanceTracker:

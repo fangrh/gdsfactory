@@ -803,6 +803,22 @@ class Component(ComponentBase, kf.DKCell):
             _tracker.track_instance(
                 self.name, component.name, _inst_path, _transform
             )
+            # Tag shapes: prefer deterministic thread-local tag (AST transform)
+            # over runtime inspect.stack() heuristic
+            _source_tag = None
+            try:
+                from app.gds._tag_runtime import get_current_tag
+                _source_tag = get_current_tag()
+            except ImportError:
+                pass
+
+            if _source_tag is not None:
+                from gdsfactory.provenance import tag_shapes_with_source_tag
+                tag_shapes_with_source_tag(component.kdb_cell, _source_tag)
+            else:
+                from gdsfactory.provenance import tag_shapes_with_placement, _find_user_frame
+                _placement_info = _find_user_frame()
+                tag_shapes_with_placement(component.kdb_cell, _placement_info, _tracker._entries[-1]["id"])
 
         return ComponentReference(kcl=self.kcl, instance=inst.instance)
 
