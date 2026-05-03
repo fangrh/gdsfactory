@@ -132,25 +132,24 @@ def tag_shapes_with_source_tag(kdb_cell, source_tag: str) -> None:
     Each shape gets a unique shape_idx so individual shapes can be traced
     back to a specific polygon within a placement, enabling per-shape deletion.
     """
-    _tag_cell_with_shape_index(kdb_cell, source_tag)
+    _tag_cell_with_shape_index(kdb_cell, source_tag, [0])
 
 
-def _tag_cell_with_shape_index(cell, base_tag: str) -> None:
+def _tag_cell_with_shape_index(cell, base_tag: str, counter: list[int]) -> None:
     if cell.is_locked():
         cell.locked = False
-    shape_idx = 0
     for li in range(cell.layout().layers()):
         if not cell.layout().is_valid_layer(li):
             continue
         for shape in cell.shapes(li).each():
             tag_data = json.loads(base_tag)
-            tag_data["shape_idx"] = shape_idx
+            tag_data["shape_idx"] = counter[0]
             shape.set_property(PROV_ID_PROP_KEY, json.dumps(tag_data))
-            shape_idx += 1
+            counter[0] += 1
     for ci in cell.each_child_cell():
         child = cell.layout().cell(ci)
         if child is not None:
-            _tag_cell_with_shape_index(child, base_tag)
+            _tag_cell_with_shape_index(child, base_tag, counter)
 
 
 def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:
