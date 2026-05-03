@@ -127,12 +127,30 @@ def _find_user_frame() -> dict[str, Any] | None:
 
 
 def tag_shapes_with_source_tag(kdb_cell, source_tag: str) -> None:
-    """Tag all shapes in a cell (and descendants) with AST-transform source tag.
+    """Tag all shapes in a cell (and descendants) with indexed source tags.
 
-    Called from add_ref() when the thread-local source tag is available
-    (i.e. running under the AST transform build pipeline).
+    Each shape gets a unique shape_idx so individual shapes can be traced
+    back to a specific polygon within a placement, enabling per-shape deletion.
     """
-    _tag_cell_recursive(kdb_cell, source_tag, PROV_ID_PROP_KEY)
+    _tag_cell_with_shape_index(kdb_cell, source_tag)
+
+
+def _tag_cell_with_shape_index(cell, base_tag: str) -> None:
+    if cell.is_locked():
+        cell.locked = False
+    shape_idx = 0
+    for li in range(cell.layout().layers()):
+        if not cell.layout().is_valid_layer(li):
+            continue
+        for shape in cell.shapes(li).each():
+            tag_data = json.loads(base_tag)
+            tag_data["shape_idx"] = shape_idx
+            shape.set_property(PROV_ID_PROP_KEY, json.dumps(tag_data))
+            shape_idx += 1
+    for ci in cell.each_child_cell():
+        child = cell.layout().cell(ci)
+        if child is not None:
+            _tag_cell_with_shape_index(child, base_tag)
 
 
 def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:
