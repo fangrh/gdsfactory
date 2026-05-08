@@ -801,7 +801,8 @@ class Component(ComponentBase, kf.DKCell):
             _inst_path = f"{self.name}/{_inst_name}"
             _transform = str(inst.instance.dcplx_trans)
             _tracker.track_instance(
-                self.name, component.name, _inst_path, _transform
+                self.name, component.name, _inst_path, _transform,
+                columns=columns, rows=rows,
             )
             # Tag shapes: prefer deterministic thread-local tag (AST transform)
             # over runtime inspect.stack() heuristic
