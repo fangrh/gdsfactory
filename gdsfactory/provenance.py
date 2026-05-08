@@ -113,6 +113,9 @@ def _find_user_frame() -> dict[str, Any] | None:
                     "source_text": source_line,
                     "call_stack": call_stack,
                 }
+                loop_index = _try_extract_loop_index(current, source_line)
+                if loop_index is not None:
+                    user_info["loop_index"] = loop_index
                 break
             current = current.f_back
             frames_to_clean.append(current)
@@ -125,6 +128,24 @@ def _find_user_frame() -> dict[str, Any] | None:
         del frames_to_clean
 
     return user_info
+
+
+def _try_extract_loop_index(frame, source_line: str) -> list[int] | None:
+    """Best-effort extraction of loop iteration index from a user frame.
+
+    Checks if the source line uses enumerate and looks for common
+    index variable names in frame.f_locals. Returns None if detection
+    fails (non-loop code, unusual variable names, etc.).
+    """
+    if "enumerate" not in source_line:
+        return None
+
+    index_vars = ("i", "idx", "ix", "iy", "ic", "ir", "col", "row", "n")
+    for var in index_vars:
+        val = frame.f_locals.get(var)
+        if isinstance(val, int):
+            return [val]
+    return None
 
 
 def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:
@@ -203,6 +224,8 @@ class ProvenanceTracker:
         ref_name: str,
         instance_path: str,
         transform: str,
+        columns: int = 1,
+        rows: int = 1,
     ) -> int:
         """Track an add_ref placement with instance path (D13)."""
         pid = _next_global_id()
@@ -233,6 +256,9 @@ class ProvenanceTracker:
                 "source_text": "",
                 "call_stack": [],
             })
+
+        if columns > 1 or rows > 1:
+            entry["loop_index"] = [columns, rows]
 
         self._entries.append(entry)
         return pid
