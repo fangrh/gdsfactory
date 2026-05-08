@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import linecache
+import re
 import threading
 from typing import Any
 
@@ -62,6 +63,7 @@ _GDSFACTORY_DIRS: tuple[str, ...] = (
     "kfactory",
     "klayout",
     "cachetools",
+    "loguru",
 )
 
 
@@ -130,22 +132,75 @@ def _find_user_frame() -> dict[str, Any] | None:
     return user_info
 
 
+_FOR_LOOP_RE = re.compile(r"^for\s+([\w]+)")
+
+
 def _try_extract_loop_index(frame, source_line: str) -> list[int] | None:
-    """Best-effort extraction of loop iteration index from a user frame.
+    """Best-effort extraction of loop iteration indices from a user frame.
 
-    Checks if the source line uses enumerate and looks for common
-    index variable names in frame.f_locals. Returns None if detection
-    fails (non-loop code, unusual variable names, etc.).
+    Scans backwards from the user frame's source line to find enclosing
+    for-loop headers (``for VAR in range(...)``, ``for VAR in items``, etc.),
+    then looks up each loop variable in the frame's locals.
+
+    Uses indentation tracking to only accept for-loop headers that sit on
+    the **enclosing block path** — i.e. lines whose indentation forms a
+    strictly decreasing sequence when scanning backwards from the current
+    line.  A for-loop whose body has already ended (e.g. same-indent code
+    appears between it and the current line) is correctly skipped.
+
+    Returns a list of integer indices (outermost first) or None if no
+    enclosing integer-indexed loop is found.
     """
-    if "enumerate" not in source_line:
-        return None
+    explicit_index = frame.f_locals.get("_gds_provenance_loop_index")
+    if isinstance(explicit_index, int):
+        return [explicit_index]
+    if (
+        isinstance(explicit_index, list)
+        and explicit_index
+        and all(isinstance(value, int) for value in explicit_index)
+    ):
+        return explicit_index
 
-    index_vars = ("i", "idx", "ix", "iy", "ic", "ir", "col", "row", "n")
-    for var in index_vars:
-        val = frame.f_locals.get(var)
-        if isinstance(val, int):
-            return [val]
-    return None
+    filepath = frame.f_code.co_filename
+    lineno = frame.f_lineno
+
+    indices: list[int] = []
+    seen_vars: set[str] = set()
+
+    # Build the list of "block boundary" lines — lines at a new minimum
+    # indentation (strictly decreasing) as we scan backwards.  Only for-loop
+    # headers that appear in this boundary list are truly enclosing.
+    boundary_indents: list[int] = []  # decreasing indent levels
+    current_min: int | None = None
+
+    for offset in range(1, 30):
+        raw_line = linecache.getline(filepath, lineno - offset)
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        # Stop at function / class / decorator boundary
+        if stripped.startswith(("def ", "class ", "@")):
+            break
+
+        line_indent = len(raw_line) - len(raw_line.lstrip())
+
+        # Only record lines that introduce a new (lower) indent level
+        if current_min is None or line_indent < current_min:
+            current_min = line_indent
+            boundary_indents.append(line_indent)
+
+            # If this boundary line is a for-loop, it encloses the current line
+            m = _FOR_LOOP_RE.match(stripped)
+            if m:
+                var_name = m.group(1)
+                if var_name not in seen_vars:
+                    seen_vars.add(var_name)
+                    val = frame.f_locals.get(var_name)
+                    if isinstance(val, int):
+                        indices.insert(0, val)
+
+    return indices if indices else None
 
 
 def tag_shapes_with_placement(kdb_cell, user_info: dict, instance_prov_id: int) -> None:
@@ -248,6 +303,8 @@ class ProvenanceTracker:
                 "source_text": user_info["source_text"],
                 "call_stack": user_info["call_stack"],
             })
+            if "loop_index" in user_info:
+                entry["loop_index"] = user_info["loop_index"]
         else:
             entry.update({
                 "file": "<unknown>",

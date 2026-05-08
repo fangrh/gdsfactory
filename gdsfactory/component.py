@@ -423,6 +423,8 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
         """
         if hasattr(self, "_provenance_tracker"):
             return self._provenance_tracker
+        if not hasattr(self, "kdb_cell"):
+            return None
         from gdsfactory.provenance import get_tracker
         _cidx = self.kdb_cell.cell_index()
         existing = get_tracker(_cidx)
