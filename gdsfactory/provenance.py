@@ -115,9 +115,15 @@ def _find_user_frame() -> dict[str, Any] | None:
                     "source_text": source_line,
                     "call_stack": call_stack,
                 }
+                # Extract LHS variable name from source line
+                assign_match = re.match(r"^(\w+)\s*=", source_line)
+                if assign_match:
+                    user_info["variable_name"] = assign_match.group(1)
                 loop_index = _try_extract_loop_index(current, source_line)
                 if loop_index is not None:
                     user_info["loop_index"] = loop_index
+                    if "variable_name" in user_info:
+                        user_info["variable_in_loop"] = True
                 break
             current = current.f_back
             frames_to_clean.append(current)
@@ -305,6 +311,10 @@ class ProvenanceTracker:
             })
             if "loop_index" in user_info:
                 entry["loop_index"] = user_info["loop_index"]
+            if "variable_name" in user_info:
+                entry["variable_name"] = user_info["variable_name"]
+            if "variable_in_loop" in user_info:
+                entry["variable_in_loop"] = user_info["variable_in_loop"]
         else:
             entry.update({
                 "file": "<unknown>",
