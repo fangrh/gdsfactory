@@ -345,11 +345,47 @@ class ProvenanceTracker:
         """Return the provenance data as a dict for JSON serialization."""
         return {"version": 1, "entries": self._all_entries()}
 
-    def write_sidecar(self, gds_path: str | pathlib.Path) -> pathlib.Path:
+    def write_sidecar(
+        self,
+        gds_path: str | pathlib.Path,
+        component: Any | None = None,
+    ) -> pathlib.Path:
         """Write .provenance.json sidecar next to the GDS file."""
         gds_path = pathlib.Path(gds_path)
         sidecar_path = gds_path.with_suffix(".provenance.json")
+        data = self.get_sidecar()
+        if component is not None:
+            data["ports"] = _collect_component_ports(component)
         sidecar_path.write_text(
-            json.dumps(self.get_sidecar(), indent=2), encoding="utf-8"
+            json.dumps(data, indent=2), encoding="utf-8"
         )
         return sidecar_path
+
+
+def _collect_component_ports(component) -> dict[str, list[dict]]:
+    """Collect port information from a component and its children.
+
+    Returns a dict mapping component name to a list of port dicts.
+    """
+    from gdsfactory.port import to_dict
+
+    ports_by_component: dict[str, list[dict]] = {}
+    visited: set[str] = set()
+
+    def _visit(comp) -> None:
+        name = comp.name
+        if name in visited:
+            return
+        visited.add(name)
+
+        port_list = [to_dict(p) for p in comp.ports if p.name is not None]
+        if port_list:
+            ports_by_component[name] = port_list
+
+        for inst in comp.insts:
+            child = inst.cell
+            if child is not None:
+                _visit(child)
+
+    _visit(component)
+    return ports_by_component

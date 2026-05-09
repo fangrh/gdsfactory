@@ -498,7 +498,7 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
         if _tracker is not None:
             all_entries = _tracker._all_entries()
             if all_entries:
-                _tracker.write_sidecar(gdspath)
+                _tracker.write_sidecar(gdspath, component=self)
             from gdsfactory.provenance import _reset_global_id
             _reset_global_id()
 
