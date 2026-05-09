@@ -115,10 +115,17 @@ def _find_user_frame() -> dict[str, Any] | None:
                     "source_text": source_line,
                     "call_stack": call_stack,
                 }
-                # Extract LHS variable name from source line
+                # Extract variable name from source line.
+                # Handles both assignment (var = ...) and << operator
+                # placement (comp << var) patterns.
                 assign_match = re.match(r"^(\w+)\s*=", source_line)
                 if assign_match:
                     user_info["variable_name"] = assign_match.group(1)
+                else:
+                    # comp << var  — right operand is the variable name
+                    lshift_match = re.search(r"<<\s+(\w+)\s*$", source_line)
+                    if lshift_match:
+                        user_info["variable_name"] = lshift_match.group(1)
                 loop_index = _try_extract_loop_index(current, source_line)
                 if loop_index is not None:
                     user_info["loop_index"] = loop_index
