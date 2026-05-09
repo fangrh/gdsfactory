@@ -355,25 +355,32 @@ class ProvenanceTracker:
         sidecar_path = gds_path.with_suffix(".provenance.json")
         data = self.get_sidecar()
         if component is not None:
-            data["ports"] = _collect_component_ports(component)
+            ports, ref_names = _collect_component_metadata(component)
+            data["ports"] = ports
+            data["ref_names"] = ref_names
         sidecar_path.write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
         return sidecar_path
 
 
-def _collect_component_ports(component) -> dict[str, list[dict]]:
-    """Collect port information from a component and its children.
+def _collect_component_metadata(component) -> tuple[dict[str, list[dict]], dict[str, str]]:
+    """Collect port and instance-name metadata from a component tree.
 
-    Returns a dict mapping component name to a list of port dicts.
+    Returns a tuple of:
+      ports_by_component: dict mapping component name to list of port dicts.
+      ref_names: dict mapping instance name to component name.
     """
     from gdsfactory.port import to_dict
 
     ports_by_component: dict[str, list[dict]] = {}
+    ref_names: dict[str, str] = {}
     visited: set[str] = set()
 
-    def _visit(comp) -> None:
+    def _visit(comp, inst_name: str | None = None) -> None:
         name = comp.name
+        if inst_name is not None:
+            ref_names[inst_name] = name
         if name in visited:
             return
         visited.add(name)
@@ -385,7 +392,7 @@ def _collect_component_ports(component) -> dict[str, list[dict]]:
         for inst in comp.insts:
             child = inst.cell
             if child is not None:
-                _visit(child)
+                _visit(child, inst_name=inst.name)
 
     _visit(component)
-    return ports_by_component
+    return ports_by_component, ref_names
