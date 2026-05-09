@@ -784,8 +784,11 @@ class Component(ComponentBase, kf.DKCell):
             inst = self.create_inst(component, na=columns, nb=rows, a=a, b=b)
         else:
             inst = self.create_inst(component)
-        if name is not None:
-            inst.name = name
+
+        # Set instance name (explicit or auto-generated) so provenance
+        # and kfactory instance names match.
+        _inst_name = name or f"{component.name}_{len(self.insts)}"
+        inst.name = _inst_name
 
         _tracker = self._get_provenance_tracker()
         if _tracker is not None:
@@ -799,7 +802,6 @@ class Component(ComponentBase, kf.DKCell):
                 _tracker.add_child_tracker(child_tracker)
             elif child_tracker is None:
                 component._provenance_tracker = _tracker
-            _inst_name = name or f"{component.name}_{len(self.insts)}"
             _inst_path = f"{self.name}/{_inst_name}"
             _transform = str(inst.instance.dcplx_trans)
             _tracker.track_instance(
