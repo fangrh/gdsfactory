@@ -391,7 +391,7 @@ def _collect_component_metadata(component) -> tuple[dict[str, list[dict]], dict[
 
         for inst in comp.insts:
             child = inst.cell
-            if child is not None:
+            if child is not None and inst.name:
                 _visit(child, inst_name=inst.name)
 
     _visit(component)
