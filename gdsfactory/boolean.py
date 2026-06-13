@@ -76,7 +76,19 @@ def boolean(
         br = kf.kdb.Region(B.begin_shapes_rec(layer_index2))
     else:
         br = get_ref_shapes(B, layer_index2)
-    c.shapes(layer_index).insert(boolean_operations[operation](ar, br))
+    result_region = boolean_operations[operation](ar, br)
+    # Route the boolean result polygons through provenance tracking, mirroring
+    # Component.add_polygon. A raw shapes().insert(region) bypasses the tracker,
+    # so boolean-built geometry would otherwise get no PROV_ID and no sidecar —
+    # capture() walks the stack past gdsfactory frames to the user's
+    # gf.boolean(...) call site.
+    _tracker = getattr(c, "_get_provenance_tracker", lambda: None)()
+    if _tracker is not None:
+        for _poly in result_region.each():
+            _shape = c.shapes(layer_index).insert(_poly)
+            _shape.set_property(1002, _tracker.capture(c.name, "polygon"))
+    else:
+        c.shapes(layer_index).insert(result_region)
 
     return c
 
