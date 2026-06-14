@@ -414,7 +414,12 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
                 self.info[k] = v
 
     def _get_provenance_tracker(self):
-        """Lazily initialize a ProvenanceTracker if GDS_PROVENANCE=1 is set.
+        """Lazily initialize a ProvenanceTracker (on by default; opt out with GDS_PROVENANCE=0).
+
+        Tracking is on for every compile path — IDE Run button, terminal,
+        or an external `python foo.py` — so source attribution is never
+        silently lost because an env var wasn't set. Set GDS_PROVENANCE=0
+        to disable it (e.g. for speed on very large layouts).
 
         Uses a module-level dict keyed by klayout cell_index because
         kfactory's cell caching creates new Python wrappers for cached
@@ -431,7 +436,7 @@ class ComponentBase(ProtoKCell[float, BaseKCell], ABC):
         if existing is not None:
             self._provenance_tracker = existing
             return existing
-        if os.environ.get("GDS_PROVENANCE") == "1":
+        if os.environ.get("GDS_PROVENANCE") != "0":
             from gdsfactory.provenance import ProvenanceTracker, set_tracker
 
             tracker = ProvenanceTracker()

@@ -1,9 +1,10 @@
 """Provenance tracking for per-shape source attribution.
 
-When GDS_PROVENANCE=1 is set, captures the user-code call site for each
-shape added to a Component and writes a .provenance.json sidecar alongside
-the GDS file. Each shape gets a PROV_ID GDS property mapping to an entry
-in the sidecar.
+Provenance tracking is ON by default; set GDS_PROVENANCE=0 to opt out
+(e.g. for speed on very large layouts). Captures the user-code call site
+for each shape added to a Component and writes a .provenance.json sidecar
+alongside the GDS file. Each shape gets a PROV_ID GDS property mapping to
+an entry in the sidecar.
 """
 
 from __future__ import annotations
